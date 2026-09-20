@@ -10,6 +10,7 @@ const TIME_SLOTS = Array.from({length: 15}, (_, index) => {
 let bookedTimes = new Set();
 let bookedTimesDate = "";
 let calendarMonthStart = null;
+let selectedDayFull = false;
 
 const persianPartsFormatter = new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
   year: "numeric",
@@ -233,6 +234,7 @@ function handleDateSelection() {
   resetSelectedTime();
   bookedTimes = new Set();
   bookedTimesDate = "";
+  selectedDayFull = false;
 
   if (!els.date.value) {
     els.timePickerBtn.disabled = true;
@@ -267,6 +269,7 @@ async function fetchBookedTimes(date) {
   const result = await response.json();
   bookedTimes = new Set(result.bookedTimes || []);
   bookedTimesDate = date;
+  selectedDayFull = Boolean(result.capacityFull);
   return result;
 }
 
@@ -294,23 +297,47 @@ function renderTimeSlots() {
   const date = els.date.value;
   els.timeSlots.innerHTML = "";
 
+  if (selectedDayFull) {
+    const full = document.createElement("div");
+    full.className = "capacity-full";
+    full.innerHTML = `
+      <i data-lucide="calendar-x-2"></i>
+      <strong>ظرفیت رزرو امروز تکمیل شده می‌باشد</strong>
+      <span>لطفاً یک روز دیگر را از تقویم انتخاب کنید.</span>
+    `;
+    els.timeSlots.appendChild(full);
+    if (window.lucide) lucide.createIcons();
+    return;
+  }
+
+  let availableCount = 0;
+
   TIME_SLOTS.forEach(time => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "time-slot";
-    button.textContent = time;
 
     const booked = bookedTimesDate === date && bookedTimes.has(time);
     const passed = isPastTimeToday(time, date);
-    button.disabled = booked || passed;
+    const disabled = booked || passed;
+
+    if (!disabled) availableCount += 1;
+
+    button.disabled = disabled;
+
+    const stateLabel = booked ? "رزرو شده" : passed ? "گذشته" : "آزاد";
+    button.innerHTML = `<span>${time}</span><small>${stateLabel}</small>`;
+
     if (booked) {
       button.classList.add("booked");
       button.setAttribute("aria-label", `${time} رزرو شده`);
     }
+
     if (passed) {
       button.classList.add("passed");
       button.setAttribute("aria-label", `${time} گذشته است`);
     }
+
     if (els.time.value === time) button.classList.add("selected");
 
     button.addEventListener("click", () => {
@@ -322,6 +349,20 @@ function renderTimeSlots() {
 
     els.timeSlots.appendChild(button);
   });
+
+  // Today may have no usable time left even though some slots were not booked.
+  if (availableCount === 0) {
+    els.timeSlots.innerHTML = "";
+    const full = document.createElement("div");
+    full.className = "capacity-full";
+    full.innerHTML = `
+      <i data-lucide="clock-alert"></i>
+      <strong>برای امروز زمان قابل رزروی باقی نمانده است</strong>
+      <span>لطفاً یک روز دیگر را انتخاب کنید.</span>
+    `;
+    els.timeSlots.appendChild(full);
+    if (window.lucide) lucide.createIcons();
+  }
 }
 
 async function openTimeModal() {
@@ -331,12 +372,17 @@ async function openTimeModal() {
   els.selectedTimeLabel.textContent = "در حال بررسی زمان‌ها...";
 
   try {
-    await fetchBookedTimes(els.date.value);
+    const availability = await fetchBookedTimes(els.date.value);
     renderTimeSlots();
+    if (availability.capacityFull) {
+      els.selectedTimeLabel.textContent = "ظرفیت تکمیل شده";
+    }
     els.timeModal.classList.add("show");
     els.timeModal.setAttribute("aria-hidden", "false");
     document.body.style.overflow = "hidden";
-    els.selectedTimeLabel.textContent = els.time.value || "انتخاب ساعت";
+    if (!selectedDayFull) {
+      els.selectedTimeLabel.textContent = els.time.value || "انتخاب ساعت";
+    }
   } catch {
     showFormError("امکان دریافت زمان‌های آزاد وجود ندارد. لطفاً دوباره تلاش کن.");
     els.selectedTimeLabel.textContent = "انتخاب ساعت";
@@ -379,9 +425,10 @@ async function createBooking(booking) {
   });
 
   const result = await response.json().catch(() => ({}));
-  if (response.status === 409 || result.error === "SLOT_TAKEN") {
-    const error = new Error("SLOT_TAKEN");
-    error.code = "SLOT_TAKEN";
+  const knownErrors = ["SLOT_TAKEN", "DAY_FULL", "TIME_PASSED"];
+  if (!response.ok && knownErrors.includes(result.error)) {
+    const error = new Error(result.error);
+    error.code = result.error;
     throw error;
   }
   if (!response.ok) throw new Error(result.error || "BOOKING_API_ERROR");
@@ -466,6 +513,7 @@ els.form.addEventListener("submit", async event => {
     els.form.reset();
     bookedTimes = new Set();
     bookedTimesDate = "";
+    selectedDayFull = false;
     resetSelectedDate();
     resetSelectedTime();
     els.timePickerBtn.disabled = true;
@@ -476,7 +524,17 @@ els.form.addEventListener("submit", async event => {
     if (error.code === "SLOT_TAKEN" || error.message === "SLOT_TAKEN") {
       resetSelectedTime();
       try { await fetchBookedTimes(booking.date); } catch {}
-      showFormError("این ساعت همین الان توسط شخص دیگری رزرو شد. لطفاً ساعت دیگری را انتخاب کن.");
+      showFormError("این زمان همین الان توسط شخص دیگری رزرو شد. لطفاً یکی از زمان‌های آزاد را انتخاب کن.");
+    } else if (error.code === "DAY_FULL" || error.message === "DAY_FULL") {
+      resetSelectedTime();
+      selectedDayFull = true;
+      els.timePickerBtn.disabled = true;
+      els.selectedTimeLabel.textContent = "ظرفیت تکمیل شده";
+      showFormError("ظرفیت رزرو امروز تکمیل شده می‌باشد. لطفاً یک روز دیگر را انتخاب کن.");
+    } else if (error.code === "TIME_PASSED" || error.message === "TIME_PASSED") {
+      resetSelectedTime();
+      try { await fetchBookedTimes(booking.date); } catch {}
+      showFormError("زمان انتخاب‌شده گذشته است. لطفاً یک زمان جدید انتخاب کن.");
     } else if (error.message === "API_NOT_CONFIGURED") {
       showFormError("اتصال رزرو هنوز پیکربندی نشده است.");
     } else {
