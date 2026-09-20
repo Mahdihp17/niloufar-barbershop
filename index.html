@@ -201,14 +201,15 @@
             </div>
           </label>
 
-          <label class="field">
+          <div class="field">
             <span>تاریخ رزرو</span>
-            <div class="input-wrap">
-              <i data-lucide="calendar-days"></i>
-              <input id="date" name="date" type="date" required />
-            </div>
-            <small id="dateHint" class="field-hint">جمعه‌ها امکان رزرو وجود ندارد.</small>
-          </label>
+            <button type="button" id="datePickerBtn" class="select-button date-select-button" aria-haspopup="dialog">
+              <span><i data-lucide="calendar-days"></i><b id="selectedDateLabel">انتخاب تاریخ شمسی</b></span>
+              <i data-lucide="chevron-down"></i>
+            </button>
+            <input id="date" name="date" type="hidden" required />
+            <small id="dateHint" class="field-hint">تقویم شمسی است؛ جمعه‌ها امکان رزرو وجود ندارد.</small>
+          </div>
 
           <div class="field">
             <span>ساعت رزرو</span>
@@ -293,6 +294,32 @@
     </div>
     <p>© <span id="year"></span> آرایشگاه مردانه نیلوفر. تمامی حقوق محفوظ است.</p>
   </footer>
+
+  <div id="dateModal" class="modal" aria-hidden="true">
+    <button class="modal-backdrop" type="button" data-close-date-modal aria-label="بستن"></button>
+    <div class="modal-card calendar-card glass" role="dialog" aria-modal="true" aria-labelledby="dateModalTitle">
+      <div class="modal-head">
+        <div>
+          <span>تقویم شمسی</span>
+          <h3 id="dateModalTitle">تاریخ نوبت را انتخاب کن</h3>
+        </div>
+        <button class="icon-button" type="button" data-close-date-modal aria-label="بستن تقویم"><i data-lucide="x"></i></button>
+      </div>
+
+      <div class="calendar-toolbar">
+        <button id="calendarPrevMonth" class="icon-button calendar-nav-button" type="button" aria-label="ماه قبل"><i data-lucide="chevron-right"></i></button>
+        <strong id="calendarMonthLabel" class="calendar-month-label"></strong>
+        <button id="calendarNextMonth" class="icon-button calendar-nav-button" type="button" aria-label="ماه بعد"><i data-lucide="chevron-left"></i></button>
+      </div>
+
+      <div class="calendar-weekdays" aria-hidden="true">
+        <span>ش</span><span>ی</span><span>د</span><span>س</span><span>چ</span><span>پ</span><span class="friday-label">ج</span>
+      </div>
+      <div id="calendarDays" class="calendar-days"></div>
+
+      <p class="modal-note"><i data-lucide="info"></i> جمعه‌ها و تاریخ‌های گذشته قابل انتخاب نیستند.</p>
+    </div>
+  </div>
 
   <div id="timeModal" class="modal" aria-hidden="true">
     <button class="modal-backdrop" type="button" data-close-modal aria-label="بستن"></button>
