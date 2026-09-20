@@ -1,7 +1,12 @@
 // Niloufar Barbershop - Production booking frontend with Persian (Jalali) calendar
 const BOOKING_API_URL = "https://eahlaxmbsndvsdpwwlao.supabase.co/functions/v1/booking-api";
 
-const TIME_SLOTS = ["18:00", "19:00", "20:00", "21:00", "22:00", "23:00"];
+const TIME_SLOTS = Array.from({length: 15}, (_, index) => {
+  const total = 18 * 60 + index * 20;
+  const hour = String(Math.floor(total / 60)).padStart(2, "0");
+  const minute = String(total % 60).padStart(2, "0");
+  return `${hour}:${minute}`;
+});
 let bookedTimes = new Set();
 let bookedTimesDate = "";
 let calendarMonthStart = null;
@@ -265,6 +270,26 @@ async function fetchBookedTimes(date) {
   return result;
 }
 
+
+function isPastTimeToday(time, dateString) {
+  const today = todayLocal();
+  const selected = fromIsoDate(dateString);
+  if (!isSameDate(today, selected)) return false;
+
+  const nowParts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Tehran",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(new Date());
+
+  const map = Object.fromEntries(nowParts.map(p => [p.type, p.value]));
+  const currentMinutes = Number(map.hour) * 60 + Number(map.minute);
+  const [h, m] = time.split(":").map(Number);
+
+  return h * 60 + m <= currentMinutes;
+}
+
 function renderTimeSlots() {
   const date = els.date.value;
   els.timeSlots.innerHTML = "";
@@ -276,8 +301,16 @@ function renderTimeSlots() {
     button.textContent = time;
 
     const booked = bookedTimesDate === date && bookedTimes.has(time);
-    button.disabled = booked;
-    if (booked) button.setAttribute("aria-label", `${time} رزرو شده`);
+    const passed = isPastTimeToday(time, date);
+    button.disabled = booked || passed;
+    if (booked) {
+      button.classList.add("booked");
+      button.setAttribute("aria-label", `${time} رزرو شده`);
+    }
+    if (passed) {
+      button.classList.add("passed");
+      button.setAttribute("aria-label", `${time} گذشته است`);
+    }
     if (els.time.value === time) button.classList.add("selected");
 
     button.addEventListener("click", () => {
