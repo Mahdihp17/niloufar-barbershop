@@ -1,16 +1,10 @@
-// ------------------------------------------------------------
-// Niloufar Barbershop - Frontend prototype
-// IMPORTANT:
-// GitHub Pages is static. For production-wide availability locking
-// and Telegram delivery, connect this frontend to a secure backend/API.
-// Do NOT place a Telegram bot token directly in this file.
-// ------------------------------------------------------------
+// Niloufar Barbershop - Production booking frontend
+// Replace YOUR_PROJECT_REF after deploying the Supabase Edge Function.
+const BOOKING_API_URL = "https://eahlaxmbsndvsdpwwlao.supabase.co/functions/v1/booking-api";
 
-const BOOKING_API_URL = ""; // Later: put your secure backend/serverless endpoint here.
-const STORAGE_KEY = "niloufar_bookings_v1";
-
-// One-hour appointment starts. Change this array later if you prefer 30-minute slots.
 const TIME_SLOTS = ["18:00", "19:00", "20:00", "21:00", "22:00", "23:00"];
+let bookedTimes = new Set();
+let bookedTimesDate = "";
 
 const els = {
   form: document.getElementById("bookingForm"),
@@ -34,22 +28,8 @@ const toEnglishDigits = (value = "") => value
   .replace(/[۰-۹]/g, d => "۰۱۲۳۴۵۶۷۸۹".indexOf(d))
   .replace(/[٠-٩]/g, d => "٠١٢٣٤٥٦٧٨٩".indexOf(d));
 
-function getBookings() {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
-  } catch {
-    return [];
-  }
-}
-
-function saveBooking(booking) {
-  const bookings = getBookings();
-  bookings.push(booking);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(bookings));
-}
-
-function isSlotBooked(date, time) {
-  return getBookings().some(item => item.date === date && item.time === time);
+function apiConfigured() {
+  return BOOKING_API_URL.startsWith("https://") && !BOOKING_API_URL.includes("YOUR_PROJECT_REF");
 }
 
 function isFriday(dateString) {
@@ -92,6 +72,22 @@ function resetSelectedTime() {
   els.selectedTimeLabel.textContent = "انتخاب ساعت";
 }
 
+async function fetchBookedTimes(date) {
+  if (!apiConfigured()) throw new Error("API_NOT_CONFIGURED");
+
+  const response = await fetch(`${BOOKING_API_URL}?date=${encodeURIComponent(date)}`, {
+    method: "GET",
+    headers: { "Accept": "application/json" },
+    cache: "no-store"
+  });
+
+  if (!response.ok) throw new Error("AVAILABILITY_ERROR");
+  const result = await response.json();
+  bookedTimes = new Set(result.bookedTimes || []);
+  bookedTimesDate = date;
+  return result;
+}
+
 function renderTimeSlots() {
   const date = els.date.value;
   els.timeSlots.innerHTML = "";
@@ -102,10 +98,9 @@ function renderTimeSlots() {
     button.className = "time-slot";
     button.textContent = time;
 
-    const booked = isSlotBooked(date, time);
+    const booked = bookedTimesDate === date && bookedTimes.has(time);
     button.disabled = booked;
     if (booked) button.setAttribute("aria-label", `${time} رزرو شده`);
-
     if (els.time.value === time) button.classList.add("selected");
 
     button.addEventListener("click", () => {
@@ -119,12 +114,25 @@ function renderTimeSlots() {
   });
 }
 
-function openTimeModal() {
+async function openTimeModal() {
   if (!els.date.value || isFriday(els.date.value)) return;
-  renderTimeSlots();
-  els.timeModal.classList.add("show");
-  els.timeModal.setAttribute("aria-hidden", "false");
-  document.body.style.overflow = "hidden";
+
+  els.timePickerBtn.disabled = true;
+  els.selectedTimeLabel.textContent = "در حال بررسی زمان‌ها...";
+
+  try {
+    await fetchBookedTimes(els.date.value);
+    renderTimeSlots();
+    els.timeModal.classList.add("show");
+    els.timeModal.setAttribute("aria-hidden", "false");
+    document.body.style.overflow = "hidden";
+    els.selectedTimeLabel.textContent = els.time.value || "انتخاب ساعت";
+  } catch {
+    showFormError("امکان دریافت زمان‌های آزاد وجود ندارد. لطفاً دوباره تلاش کن.");
+    els.selectedTimeLabel.textContent = "انتخاب ساعت";
+  } finally {
+    els.timePickerBtn.disabled = false;
+  }
 }
 
 function closeTimeModal() {
@@ -151,28 +159,30 @@ function validatePhone(phone) {
   return /^09\d{9}$/.test(clean);
 }
 
-async function sendBookingToBackend(booking) {
-  // Future hook for Telegram + central database.
-  // The backend should:
-  // 1) atomically check whether date/time is still free,
-  // 2) save the booking,
-  // 3) send the booking message to Telegram,
-  // 4) return success/error to this frontend.
-  if (!BOOKING_API_URL) return { mode: "local" };
+async function createBooking(booking) {
+  if (!apiConfigured()) throw new Error("API_NOT_CONFIGURED");
 
   const response = await fetch(BOOKING_API_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
     body: JSON.stringify(booking)
   });
 
-  if (!response.ok) throw new Error("BOOKING_API_ERROR");
-  return response.json();
+  const result = await response.json().catch(() => ({}));
+  if (response.status === 409 || result.error === "SLOT_TAKEN") {
+    const error = new Error("SLOT_TAKEN");
+    error.code = "SLOT_TAKEN";
+    throw error;
+  }
+  if (!response.ok) throw new Error(result.error || "BOOKING_API_ERROR");
+  return result;
 }
 
-els.date.addEventListener("change", () => {
+els.date.addEventListener("change", async () => {
   clearFormError();
   resetSelectedTime();
+  bookedTimes = new Set();
+  bookedTimesDate = "";
 
   if (!els.date.value) {
     els.timePickerBtn.disabled = true;
@@ -188,13 +198,13 @@ els.date.addEventListener("change", () => {
     return;
   }
 
-  els.timePickerBtn.disabled = false;
   els.dateHint.textContent = `تاریخ انتخابی: ${formatDateFa(els.date.value)}`;
   els.dateHint.style.color = "";
+  els.timePickerBtn.disabled = false;
+  els.selectedTimeLabel.textContent = "انتخاب ساعت";
 });
 
 els.timePickerBtn.addEventListener("click", openTimeModal);
-
 document.querySelectorAll("[data-close-modal]").forEach(el => el.addEventListener("click", closeTimeModal));
 document.querySelectorAll("[data-close-success]").forEach(el => el.addEventListener("click", closeSuccessModal));
 
@@ -222,15 +232,13 @@ els.form.addEventListener("submit", async event => {
   clearFormError();
 
   const booking = {
-    id: (crypto.randomUUID ? crypto.randomUUID() : `booking-${Date.now()}`),
     name: els.name.value.trim(),
     phone: toEnglishDigits(els.phone.value.trim()),
     service: els.service.value,
     date: els.date.value,
     time: els.time.value,
     product: els.product.value || "بدون محصول",
-    payment: "پرداخت در محل",
-    createdAt: new Date().toISOString()
+    payment: "پرداخت در محل"
   };
 
   if (!booking.name || !booking.service || !booking.date || !booking.time) {
@@ -248,12 +256,6 @@ els.form.addEventListener("submit", async event => {
     return;
   }
 
-  if (isSlotBooked(booking.date, booking.time)) {
-    resetSelectedTime();
-    showFormError("این ساعت قبلاً رزرو شده است. لطفاً ساعت دیگری را انتخاب کن.");
-    return;
-  }
-
   const submitButton = els.form.querySelector("button[type='submit']");
   const originalText = submitButton.innerHTML;
   submitButton.disabled = true;
@@ -261,20 +263,26 @@ els.form.addEventListener("submit", async event => {
   if (window.lucide) lucide.createIcons();
 
   try {
-    const result = await sendBookingToBackend(booking);
-
-    // Local mode is intentionally browser-only for this frontend milestone.
-    // When BOOKING_API_URL is active, the backend becomes the source of truth.
-    if (result.mode === "local") saveBooking(booking);
-
+    await createBooking(booking);
     openSuccessModal(booking);
     els.form.reset();
+    bookedTimes = new Set();
+    bookedTimesDate = "";
     resetSelectedTime();
     els.timePickerBtn.disabled = true;
     els.selectedTimeLabel.textContent = "ابتدا تاریخ را انتخاب کن";
     els.dateHint.textContent = "جمعه‌ها امکان رزرو وجود ندارد.";
+    els.dateHint.style.color = "";
   } catch (error) {
-    showFormError("ثبت رزرو انجام نشد. لطفاً دوباره تلاش کن.");
+    if (error.code === "SLOT_TAKEN" || error.message === "SLOT_TAKEN") {
+      resetSelectedTime();
+      try { await fetchBookedTimes(booking.date); } catch {}
+      showFormError("این ساعت همین الان توسط شخص دیگری رزرو شد. لطفاً ساعت دیگری را انتخاب کن.");
+    } else if (error.message === "API_NOT_CONFIGURED") {
+      showFormError("اتصال رزرو هنوز پیکربندی نشده است.");
+    } else {
+      showFormError("ثبت رزرو انجام نشد. لطفاً دوباره تلاش کن.");
+    }
   } finally {
     submitButton.disabled = false;
     submitButton.innerHTML = originalText;
