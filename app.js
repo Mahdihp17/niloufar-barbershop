@@ -11,6 +11,8 @@ let bookedTimes = new Set();
 let bookedTimesDate = "";
 let calendarMonthStart = null;
 let selectedDayFull = false;
+let lastReceiptData = null;
+const RECEIPT_SITE_URL = "https://mahdihp17.github.io/niloufar-barbershop/";
 
 const persianPartsFormatter = new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
   year: "numeric",
@@ -397,11 +399,269 @@ function closeTimeModal() {
   document.body.style.overflow = "";
 }
 
+
+function ensureReceiptDownloadButton() {
+  let button = document.getElementById("downloadReceiptBtn");
+  if (button) return button;
+
+  const closeButton = els.successModal.querySelector(".success-card [data-close-success]");
+  if (!closeButton) return null;
+
+  button = document.createElement("button");
+  button.id = "downloadReceiptBtn";
+  button.type = "button";
+  button.className = "btn receipt-download-btn";
+  button.innerHTML = '<i data-lucide="download"></i> دانلود رسید تصویری';
+  button.addEventListener("click", downloadReceiptImage);
+
+  closeButton.before(button);
+  if (window.lucide) lucide.createIcons();
+  return button;
+}
+
+function toPersianDigits(value = "") {
+  return String(value).replace(/\d/g, digit => "۰۱۲۳۴۵۶۷۸۹"[Number(digit)]);
+}
+
+function receiptRoundedRect(ctx, x, y, width, height, radius) {
+  const r = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + width, y, x + width, y + height, r);
+  ctx.arcTo(x + width, y + height, x, y + height, r);
+  ctx.arcTo(x, y + height, x, y, r);
+  ctx.arcTo(x, y, x + width, y, r);
+  ctx.closePath();
+}
+
+function drawReceiptWrappedText(ctx, text, x, y, maxWidth, lineHeight, maxLines = 2) {
+  const words = String(text || "").split(/\s+/);
+  const lines = [];
+  let line = "";
+
+  for (const word of words) {
+    const test = line ? `${line} ${word}` : word;
+    if (ctx.measureText(test).width <= maxWidth || !line) {
+      line = test;
+    } else {
+      lines.push(line);
+      line = word;
+      if (lines.length === maxLines - 1) break;
+    }
+  }
+
+  if (line && lines.length < maxLines) {
+    const usedWords = lines.join(" ").split(/\s+/).filter(Boolean).length;
+    const remaining = words.slice(usedWords).join(" ");
+    let finalLine = remaining || line;
+
+    while (ctx.measureText(finalLine).width > maxWidth && finalLine.length > 1) {
+      finalLine = finalLine.slice(0, -1);
+    }
+
+    if (remaining && finalLine.length < remaining.length) finalLine = `${finalLine.trim()}…`;
+    lines.push(finalLine);
+  }
+
+  lines.forEach((item, index) => ctx.fillText(item, x, y + index * lineHeight));
+  return y + lines.length * lineHeight;
+}
+
+async function createReceiptCanvas(receipt) {
+  if (document.fonts && document.fonts.ready) {
+    try { await document.fonts.ready; } catch {}
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 1080;
+  canvas.height = 1350;
+
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width;
+  const H = canvas.height;
+
+  const bg = ctx.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, "#080b12");
+  bg.addColorStop(0.5, "#0f1520");
+  bg.addColorStop(1, "#081713");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  const glow1 = ctx.createRadialGradient(900, 120, 0, 900, 120, 430);
+  glow1.addColorStop(0, "rgba(124,156,255,0.20)");
+  glow1.addColorStop(1, "rgba(124,156,255,0)");
+  ctx.fillStyle = glow1;
+  ctx.fillRect(0, 0, W, H);
+
+  const glow2 = ctx.createRadialGradient(140, 1080, 0, 140, 1080, 420);
+  glow2.addColorStop(0, "rgba(72,215,189,0.15)");
+  glow2.addColorStop(1, "rgba(72,215,189,0)");
+  ctx.fillStyle = glow2;
+  ctx.fillRect(0, 0, W, H);
+
+  // Main receipt panel
+  receiptRoundedRect(ctx, 70, 60, 940, 1230, 46);
+  ctx.fillStyle = "rgba(255,255,255,0.055)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.12)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Brand mark
+  const brandGradient = ctx.createLinearGradient(110, 100, 210, 200);
+  brandGradient.addColorStop(0, "#8aa5ff");
+  brandGradient.addColorStop(1, "#67dbc5");
+  ctx.beginPath();
+  ctx.arc(150, 150, 54, 0, Math.PI * 2);
+  ctx.fillStyle = brandGradient;
+  ctx.fill();
+
+  ctx.fillStyle = "#08101a";
+  ctx.font = '900 58px "Vazirmatn", sans-serif';
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("N", 150, 155);
+
+  ctx.textBaseline = "alphabetic";
+  ctx.textAlign = "right";
+  ctx.direction = "rtl";
+  ctx.fillStyle = "#f7f8fb";
+  ctx.font = '800 38px "Vazirmatn", sans-serif';
+  ctx.fillText("آرایشگاه مردانه نیلوفر", 940, 132);
+
+  ctx.fillStyle = "#a9b1c2";
+  ctx.font = '500 24px "Vazirmatn", sans-serif';
+  ctx.fillText("رسید رزرو آنلاین نوبت", 940, 174);
+
+  // Success pill
+  receiptRoundedRect(ctx, 110, 230, 860, 78, 24);
+  ctx.fillStyle = "rgba(72,215,189,0.10)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(72,215,189,0.24)";
+  ctx.stroke();
+
+  ctx.fillStyle = "#9ae9d7";
+  ctx.font = '700 27px "Vazirmatn", sans-serif';
+  ctx.textAlign = "center";
+  ctx.fillText("رزرو با موفقیت ثبت شده است", 540, 280);
+
+  // Booking code
+  ctx.textAlign = "right";
+  ctx.fillStyle = "#a9b1c2";
+  ctx.font = '500 22px "Vazirmatn", sans-serif';
+  ctx.fillText("کد رزرو", 920, 365);
+
+  receiptRoundedRect(ctx, 110, 390, 860, 88, 20);
+  ctx.fillStyle = "rgba(0,0,0,0.20)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.08)";
+  ctx.stroke();
+
+  ctx.direction = "ltr";
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#dce4ff";
+  ctx.font = '600 25px monospace';
+  ctx.fillText(receipt.bookingId || "ثبت‌شده", 540, 445);
+
+  const rows = [
+    ["نام و نام خانوادگی", receipt.name],
+    ["شماره موبایل", toPersianDigits(receipt.phone)],
+    ["خدمت", receipt.serviceLabel || receipt.service],
+    ["محصول", receipt.productLabel || receipt.product || "بدون محصول"],
+    ["تاریخ", formatDateFa(receipt.date)],
+    ["ساعت", toPersianDigits(receipt.time)],
+    ["روش پرداخت", "پرداخت در محل"],
+  ];
+
+  let y = 545;
+  for (const [label, value] of rows) {
+    ctx.direction = "rtl";
+    ctx.textAlign = "right";
+
+    ctx.fillStyle = "#8e99ad";
+    ctx.font = '500 21px "Vazirmatn", sans-serif';
+    ctx.fillText(label, 920, y);
+
+    ctx.fillStyle = "#f7f8fb";
+    ctx.font = '700 27px "Vazirmatn", sans-serif';
+    y = drawReceiptWrappedText(ctx, value, 920, y + 38, 760, 38, 2);
+    y += 26;
+
+    ctx.beginPath();
+    ctx.moveTo(150, y);
+    ctx.lineTo(930, y);
+    ctx.strokeStyle = "rgba(255,255,255,0.07)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    y += 42;
+  }
+
+  // Footer
+  ctx.textAlign = "center";
+  ctx.direction = "rtl";
+  ctx.fillStyle = "#a9b1c2";
+  ctx.font = '500 21px "Vazirmatn", sans-serif';
+  ctx.fillText("لطفاً در زمان انتخاب‌شده در آرایشگاه حضور داشته باشید.", 540, 1190);
+
+  ctx.direction = "ltr";
+  ctx.fillStyle = "#8aa5ff";
+  ctx.font = '600 20px sans-serif';
+  ctx.fillText(RECEIPT_SITE_URL.replace(/^https?:\/\//, ""), 540, 1240);
+
+  ctx.direction = "rtl";
+  ctx.fillStyle = "#697489";
+  ctx.font = '500 18px "Vazirmatn", sans-serif';
+  ctx.fillText("این رسید به‌صورت خودکار پس از ثبت رزرو ساخته شده است.", 540, 1275);
+
+  return canvas;
+}
+
+async function downloadReceiptImage() {
+  if (!lastReceiptData) return;
+
+  const button = document.getElementById("downloadReceiptBtn");
+  const oldHtml = button ? button.innerHTML : "";
+
+  if (button) {
+    button.disabled = true;
+    button.innerHTML = '<i data-lucide="loader-circle"></i> در حال ساخت رسید';
+    if (window.lucide) lucide.createIcons();
+  }
+
+  try {
+    const canvas = await createReceiptCanvas(lastReceiptData);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/png", 1));
+    if (!blob) throw new Error("RECEIPT_EXPORT_FAILED");
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const shortId = (lastReceiptData.bookingId || "booking").slice(0, 8);
+    link.href = url;
+    link.download = `niloufar-receipt-${shortId}.png`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  } catch {
+    showFormError("ساخت تصویر رسید انجام نشد. لطفاً دوباره تلاش کن.");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.innerHTML = oldHtml;
+      if (window.lucide) lucide.createIcons();
+    }
+  }
+}
+
 function openSuccessModal(booking) {
+  lastReceiptData = booking;
+  ensureReceiptDownloadButton();
   els.successText.textContent = `${booking.name}، نوبت شما برای ${formatDateFa(booking.date)} ساعت ${booking.time} ثبت شد. روش پرداخت: پرداخت در محل.`;
   els.successModal.classList.add("show");
   els.successModal.setAttribute("aria-hidden", "false");
   document.body.style.overflow = "hidden";
+  if (window.lucide) lucide.createIcons();
 }
 
 function closeSuccessModal() {
@@ -508,8 +768,17 @@ els.form.addEventListener("submit", async event => {
   if (window.lucide) lucide.createIcons();
 
   try {
-    await createBooking(booking);
-    openSuccessModal(booking);
+    const serviceLabel = els.service.options[els.service.selectedIndex]?.textContent?.trim() || booking.service;
+    const productLabel = els.product.options[els.product.selectedIndex]?.textContent?.trim() || booking.product;
+    const result = await createBooking(booking);
+
+    openSuccessModal({
+      ...booking,
+      serviceLabel,
+      productLabel,
+      bookingId: result?.booking?.id || result?.bookingId || ""
+    });
+
     els.form.reset();
     bookedTimes = new Set();
     bookedTimesDate = "";
